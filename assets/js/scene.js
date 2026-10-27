@@ -537,10 +537,10 @@
     { zone: 'Asia/Ho_Chi_Minh', paint: paintHN },
     { zone: 'Asia/Hong_Kong', paint: paintHK }
   ];
-  var stars = [], grain = null, mottle = null;
+  var stars = [];
   function build() {
     var rect = stage.getBoundingClientRect();
-    dpr = Math.min(window.devicePixelRatio || 1, 1.6);
+    dpr = Math.min(window.devicePixelRatio || 1, 1.25);
     W = Math.max(320, Math.round(rect.width)); H = Math.max(360, Math.round(rect.height));
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -549,6 +549,7 @@
       c.pal = palAt(c.hour);
       c.art = c.paint(c.pal);
       c.art.layers.forEach(function (L) { if (L.L) feather(L.L); });
+      c.mirror = mirror(c.art.reflect);
       c.clouds = makeClouds(c.pal, 100 + i * 13);
     });
     var r = rng(4);
@@ -558,7 +559,7 @@
     var img = gg.getImageData(0, 0, gc.c.width, gc.c.height);
     for (var p = 0; p < img.data.length; p += 4) { var v = 110 + rr() * 140; img.data[p] = img.data[p + 1] = img.data[p + 2] = v; img.data[p + 3] = 255; }
     gg.putImageData(img, 0, 0);
-    grain = ctx.createPattern(gc.c, 'repeat');
+    setTexture('.scene-grain', gc.c);
     // A seamless tile of soft paint blotches: painted on a 3x3 field, blurred, then cut from the centre.
     var T = 420, big = layer(T * 3, T * 3), bg = big.g, mr = rng(77);
     if ('filter' in bg) bg.filter = 'blur(10px)';
@@ -569,9 +570,13 @@
     }
     var mc = layer(T, T);
     mc.g.drawImage(big.c, T * dpr, T * dpr, T * dpr, T * dpr, 0, 0, T, T);
-    mottle = ctx.createPattern(mc.c, 'repeat');
+    setTexture('.scene-mottle', mc.c);
   }
 
+  function setTexture(sel, c) {
+    var el = stage.querySelector(sel);
+    if (el && !el.style.backgroundImage) { try { el.style.backgroundImage = 'url(' + c.toDataURL('image/png') + ')'; } catch (e) {} }
+  }
   function sunPos(h) {
     if (h >= 6 && h <= 18.8) { var k = (h - 6) / 12.8; return { x: 0.12 + 0.76 * k, y: WT - Math.sin(Math.PI * k) * 0.56, moon: false }; }
     var hh = h < 6 ? h + 24 : h, k2 = (hh - 18.8) / 11.2;
@@ -639,12 +644,10 @@
     g.addColorStop(0, rgb(mix(pal.skyLow, pal.water, 0.45))); g.addColorStop(0.35, rgb(pal.water)); g.addColorStop(1, rgb(pal.waterDeep));
     ctx.fillStyle = g; ctx.fillRect(0, wt, W, wh);
     ctx.globalAlpha = w * 0.36;
-    var step = 3;
-    for (var y = 0; y < wh; y += step) {
-      var src = wt - y * 1.2 - 1;
-      if (src < 0) break;
+    var step = 4, M = city.mirror;
+    for (var y = 0; y < wh && y < M.h; y += step) {
       var off = Math.sin(y * 0.13 + time * 1.5) * (0.4 + y * 0.018);
-      city.art.reflect.forEach(function (L) { ctx.drawImage(L.c, 0, src * dpr, L.c.width, step * dpr, x + off, wt + y, LW, step); });
+      ctx.drawImage(M.c, 0, y * dpr, M.c.width, step * dpr, x + off, wt + y, LW, step);
     }
     ctx.globalAlpha = w;
     var sp = sunPos(city.hour);
@@ -679,6 +682,15 @@
     fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(0.07, 'rgba(0,0,0,1)'); fg.addColorStop(0.93, 'rgba(0,0,0,1)'); fg.addColorStop(1, 'rgba(0,0,0,0)');
     g.save(); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.globalCompositeOperation = 'destination-in'; g.fillStyle = fg; g.fillRect(0, 0, L.w, L.h); g.restore();
   }
+  function mirror(layers) {
+    var wt = H * WT, rh = Math.ceil(H - wt), LW = W * 1.3, R = layer(LW, rh);
+    for (var y = 0; y < rh; y += 1) {
+      var src = wt - y * 1.2 - 1;
+      if (src < 0) break;
+      layers.forEach(function (L) { R.g.drawImage(L.c, 0, src * dpr, L.c.width, dpr, 0, y, LW, 1); });
+    }
+    return R;
+  }
   function render() {
     var c = clamp(cam.x, 0, 2), i0 = Math.min(1, Math.floor(c)), f = c - i0;
     var skyPal = mixPal(CITIES[i0].pal, CITIES[i0 + 1].pal, smooth(f));
@@ -706,16 +718,10 @@
       ctx.globalAlpha = 1;
       if (city.art.extra) city.art.extra(ctx, near, w, time);
     });
-    // Paper grain and a soft vignette.
-    if (mottle) { ctx.save(); ctx.globalAlpha = 0.34; ctx.globalCompositeOperation = 'soft-light'; ctx.fillStyle = mottle; ctx.fillRect(0, 0, W, H); ctx.restore(); }
-    if (grain) { ctx.save(); ctx.globalAlpha = 0.09; ctx.globalCompositeOperation = 'overlay'; ctx.fillStyle = grain; ctx.fillRect(0, 0, W, H); ctx.restore(); }
-    var v = ctx.createRadialGradient(W / 2, H * 0.45, Math.min(W, H) * 0.35, W / 2, H * 0.5, Math.max(W, H) * 0.8);
-    v.addColorStop(0, 'rgba(10,14,30,0)'); v.addColorStop(1, 'rgba(10,14,30,0.22)');
-    ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
   }
 
   /* ---------- motion and interaction ---------- */
-  var running = false, visible = true, intro = [], dragging = null, onCity = null;
+  var running = false, visible = true, intro = [], dragging = null, onCity = null, frameNo = 0;
   function step(now) {
     var dt = Math.min(0.05, (now - (last || now)) / 1000); last = now;
     if (!reduced) time += dt;
@@ -726,7 +732,9 @@
       cam.x += cam.v * dt;
     }
     pointer.x += (pointer.tx - pointer.x) * 0.05; pointer.y += (pointer.ty - pointer.y) * 0.05;
-    render();
+    var moving = dragging || Math.abs(cam.target - cam.x) > 0.002 || Math.abs(cam.v) > 0.002 || Math.abs(pointer.tx - pointer.x) > 0.01 || Math.abs(pointer.ty - pointer.y) > 0.01;
+    frameNo++;
+    if (moving || frameNo % 2 === 0) render();
     var nearest = Math.round(clamp(cam.x, 0, 2));
     if (nearest !== onCity) { onCity = nearest; announce(nearest); }
     if (visible) requestAnimationFrame(step); else running = false;
